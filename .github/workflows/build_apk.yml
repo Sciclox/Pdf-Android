@@ -36,12 +36,12 @@ jobs:
       - name: Analyze code
         run: flutter analyze
 
-      - name: Build APK Release
-        run: flutter build apk --release
+      - name: Build APK Release (Split per ABI for minimum file size)
+        run: flutter build apk --release --split-per-abi
 
-      - name: Upload APK Artifact
+      - name: Upload Optimized APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Lector-PDF-Android-APK
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: Lector-PDF-Android-APKs-Optimized
+          path: build/app/outputs/flutter-apk/app-*.apk
           if-no-files-found: error
