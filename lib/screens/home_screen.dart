@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
+import 'package:app_links/app_links.dart';
 import '../models/recent_pdf.dart';
 import '../services/recent_service.dart';
 import 'pdf_viewer_screen.dart';
@@ -18,11 +21,73 @@ class _HomeScreenState extends State<HomeScreen> {
   List<RecentPdf> _filteredRecents = [];
   bool _isLoading = true;
   final TextEditingController _searchController = TextEditingController();
+  final _appLinks = AppLinks();
+  StreamSubscription<Uri>? _linkSubscription;
+  static const _channel = MethodChannel('com.example.pdfreader/content_resolver');
 
   @override
   void initState() {
     super.initState();
     _loadRecents();
+    _initAppLinks();
+  }
+
+  @override
+  void dispose() {
+    _linkSubscription?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _initAppLinks() async {
+    // Escuchar enlaces entrantes mientras la app está abierta
+    _linkSubscription = _appLinks.uriLinkStream.listen((uri) {
+      _handleIncomingUri(uri);
+    });
+
+    // Procesar el enlace inicial al abrir la app desde WhatsApp o archivos
+    try {
+      final initialUri = await _appLinks.getInitialLink();
+      if (initialUri != null) {
+        _handleIncomingUri(initialUri);
+      }
+    } catch (e) {
+      debugPrint('Error obteniendo enlace inicial: $e');
+    }
+  }
+
+  Future<void> _handleIncomingUri(Uri uri) async {
+    String? filePath;
+    String fileName = 'Documento PDF';
+
+    if (uri.scheme == 'file') {
+      filePath = uri.toFilePath();
+      fileName = p.basename(filePath);
+    } else if (uri.scheme == 'content') {
+      try {
+        final String? cachedPath = await _channel
+            .invokeMethod('copyContentUriToCache', {'uri': uri.toString()});
+        if (cachedPath != null && cachedPath.isNotEmpty) {
+          filePath = cachedPath;
+          fileName = 'Documento WhatsApp.pdf';
+        }
+      } catch (e) {
+        debugPrint('Error resolviendo URI content://: $e');
+      }
+    }
+
+    if (filePath != null && mounted) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => PdfViewerScreen(
+            path: filePath!,
+            name: fileName,
+          ),
+        ),
+      );
+      _loadRecents();
+    }
   }
 
   Future<void> _loadRecents() async {
