@@ -20,6 +20,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<RecentPdf> _recents = [];
   List<RecentPdf> _filteredRecents = [];
   bool _isLoading = true;
+  bool _isProcessingUri = false;
   final TextEditingController _searchController = TextEditingController();
   final _appLinks = AppLinks();
   StreamSubscription<Uri>? _linkSubscription;
@@ -57,36 +58,54 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _handleIncomingUri(Uri uri) async {
-    String? filePath;
-    String fileName = 'Documento PDF';
+    if (_isProcessingUri) return;
+    _isProcessingUri = true;
 
-    if (uri.scheme == 'file') {
-      filePath = uri.toFilePath();
-      fileName = p.basename(filePath);
-    } else if (uri.scheme == 'content') {
-      try {
-        final String? cachedPath = await _channel
-            .invokeMethod('copyContentUriToCache', {'uri': uri.toString()});
-        if (cachedPath != null && cachedPath.isNotEmpty) {
-          filePath = cachedPath;
-          fileName = 'Documento WhatsApp.pdf';
+    try {
+      String? filePath;
+      String fileName = 'Documento PDF';
+
+      if (uri.scheme == 'file') {
+        filePath = uri.toFilePath();
+        fileName = p.basename(filePath);
+      } else if (uri.scheme == 'content') {
+        try {
+          final dynamic rawResult = await _channel
+              .invokeMethod('copyContentUriToCache', {'uri': uri.toString()});
+          if (rawResult is Map) {
+            filePath = rawResult['path'] as String?;
+            fileName = (rawResult['name'] as String?) ?? 'Documento.pdf';
+          } else if (rawResult is String) {
+            filePath = rawResult;
+            fileName = p.basename(rawResult);
+          }
+        } catch (e) {
+          debugPrint('Error resolviendo URI content://: $e');
         }
-      } catch (e) {
-        debugPrint('Error resolviendo URI content://: $e');
       }
-    }
 
-    if (filePath != null && mounted) {
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => PdfViewerScreen(
-            path: filePath!,
-            name: fileName,
+      if (filePath != null && mounted) {
+        final recents = await RecentService.getRecents();
+        final existing = recents.where((e) => e.path == filePath).firstOrNull;
+        final initialPage = (existing != null && existing.lastPage > 0)
+            ? existing.lastPage - 1
+            : 0;
+
+        if (!mounted) return;
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => PdfViewerScreen(
+              path: filePath!,
+              name: fileName,
+              initialPage: initialPage,
+            ),
           ),
-        ),
-      );
-      _loadRecents();
+        );
+        _loadRecents();
+      }
+    } finally {
+      _isProcessingUri = false;
     }
   }
 
@@ -121,6 +140,12 @@ class _HomeScreenState extends State<HomeScreen> {
         final filePath = result.files.single.path!;
         final fileName = p.basename(filePath);
 
+        final recents = await RecentService.getRecents();
+        final existing = recents.where((e) => e.path == filePath).firstOrNull;
+        final initialPage = (existing != null && existing.lastPage > 0)
+            ? existing.lastPage - 1
+            : 0;
+
         if (!mounted) return;
         await Navigator.push(
           context,
@@ -128,6 +153,7 @@ class _HomeScreenState extends State<HomeScreen> {
             builder: (context) => PdfViewerScreen(
               path: filePath,
               name: fileName,
+              initialPage: initialPage,
             ),
           ),
         );
@@ -160,6 +186,8 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
+    final initialPage = pdf.lastPage > 0 ? pdf.lastPage - 1 : 0;
+
     if (!mounted) return;
     await Navigator.push(
       context,
@@ -167,6 +195,7 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (context) => PdfViewerScreen(
           path: pdf.path,
           name: pdf.name,
+          initialPage: initialPage,
         ),
       ),
     );
@@ -412,7 +441,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       )
                     : ListView.builder(
                         itemCount: _filteredRecents.length,
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        padding: const EdgeInsets.only(left: 16, right: 16, top: 8, bottom: 88),
                         itemBuilder: (context, index) {
                           final item = _filteredRecents[index];
                           return Card(
